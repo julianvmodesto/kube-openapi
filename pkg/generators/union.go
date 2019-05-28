@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"sort"
 
+	"k8s.io/gengo/generator"
 	"k8s.io/gengo/types"
 )
 
@@ -195,7 +196,13 @@ func parseUnionMembers(t *types.Type) (*union, []error) {
 		}
 		if types.ExtractCommentTags("+", m.CommentLines)[tagUnionDeprecated] != nil {
 			if !hasOptionalTag(&m) {
-				errors = append(errors, fmt.Errorf("union members must be optional: %v.%v", t.Name, m.Name))
+				errors = append(errors, &generator.APIViolation{
+					Name:         "union_member_optional_required",
+					ErrorMessage: "union member must be optional",
+					Package:      t.Name.Package,
+					Type:         t.Name.Name,
+					Field:        m.Name,
+				})
 			}
 			u.addMember(jsonName, m.Name)
 		}

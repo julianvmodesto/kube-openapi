@@ -90,14 +90,16 @@ func (a apiViolationFile) VerifyFile(f *generator.File, path string) error {
 
 func newAPIViolationGen() *apiViolationGen {
 	return &apiViolationGen{
-		linter: newAPILinter(),
+		linter:     newAPILinter(),
+		openAPIGen: &openAPIGen{},
 	}
 }
 
 type apiViolationGen struct {
 	generator.DefaultGen
 
-	linter *apiLinter
+	linter     *apiLinter
+	openAPIGen *openAPIGen
 }
 
 func (v *apiViolationGen) FileType() string { return apiViolationFileType }
@@ -110,6 +112,8 @@ func (v *apiViolationGen) GenerateType(c *generator.Context, t *types.Type, w io
 	if err := v.linter.validate(t); err != nil {
 		return err
 	}
+	v.openAPIGen.GenerateType(c, t, ioutil.Discard)
+	v.linter.violations = append(v.linter.violations, c.APIViolations...)
 	return nil
 }
 
@@ -129,7 +133,7 @@ func (v *apiViolationGen) Finalize(c *generator.Context, w io.Writer) error {
 type apiLinter struct {
 	// API rules that implement APIRule interface and output API rule violations
 	rules      []APIRule
-	violations []apiViolation
+	violations []generator.APIViolation
 }
 
 // newAPILinter creates an apiLinter object with API rules in package rules. Please
@@ -144,36 +148,23 @@ func newAPILinter() *apiLinter {
 	}
 }
 
-// apiViolation uniquely identifies single API rule violation
-type apiViolation struct {
-	// Name of rule from APIRule.Name()
-	rule string
-
-	packageName string
-	typeName    string
-
-	// Optional: name of field that violates API rule. Empty fieldName implies that
-	// the entire type violates the rule.
-	field string
-}
-
 // apiViolations implements sort.Interface for []apiViolation based on the fields: rule,
 // packageName, typeName and field.
-type apiViolations []apiViolation
+type apiViolations []generator.APIViolation
 
 func (a apiViolations) Len() int      { return len(a) }
 func (a apiViolations) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
 func (a apiViolations) Less(i, j int) bool {
-	if a[i].rule != a[j].rule {
-		return a[i].rule < a[j].rule
+	if a[i].Name != a[j].Name {
+		return a[i].Name < a[j].Name
 	}
-	if a[i].packageName != a[j].packageName {
-		return a[i].packageName < a[j].packageName
+	if a[i].Package != a[j].Package {
+		return a[i].Package < a[j].Package
 	}
-	if a[i].typeName != a[j].typeName {
-		return a[i].typeName < a[j].typeName
+	if a[i].Type != a[j].Type {
+		return a[i].Type < a[j].Type
 	}
-	return a[i].field < a[j].field
+	return a[i].Field < a[j].Field
 }
 
 // APIRule is the interface for validating API rule on Go types
@@ -196,11 +187,11 @@ func (l *apiLinter) validate(t *types.Type) error {
 			return err
 		}
 		for _, field := range fields {
-			l.violations = append(l.violations, apiViolation{
-				rule:        r.Name(),
-				packageName: t.Name.Package,
-				typeName:    t.Name.Name,
-				field:       field,
+			l.violations = append(l.violations, generator.APIViolation{
+				Name:    r.Name(),
+				Package: t.Name.Package,
+				Type:    t.Name.Name,
+				Field:   field,
 			})
 		}
 	}
@@ -211,7 +202,7 @@ func (l *apiLinter) validate(t *types.Type) error {
 func (l *apiLinter) report(w io.Writer) error {
 	sort.Sort(apiViolations(l.violations))
 	for _, v := range l.violations {
-		fmt.Fprintf(w, "API rule violation: %s,%s,%s,%s\n", v.rule, v.packageName, v.typeName, v.field)
+		fmt.Fprintf(w, "API rule violation: %s,%s,%s,%s\n", v.Name, v.Package, v.Type, v.Field)
 	}
 	if len(l.violations) > 0 {
 		return fmt.Errorf("API rule violations exist")
